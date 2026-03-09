@@ -1,0 +1,229 @@
+name: Power Platform to GitHub (Multiple Solutions)
+
+on:
+  workflow_dispatch:
+    inputs:
+      solution_names:
+        description: 'Dataverse solution API names to export — single or comma-separated (e.g. MySolution1,MySolution2,MySolution3)'
+        required: true
+        type: string
+      increment_version:
+        description: 'Increase solution version number (patch) before export?'
+        required: true
+        default: 'false'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+      publish_customizations:
+        description: 'Publish customizations before export?'
+        required: true
+        default: 'false'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+      run_powerapps_checker:
+        description: 'Run PowerApps Checker before committing unpacked solutions?'
+        required: true
+        default: 'false'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+
+env:
+  SOLUTION_NAMES: ${{ github.event.inputs.solution_names }}
+  DATAVERSE_ENV: ${{ vars.POWERPLATFORM_ENVIRONMENT_URL }}
+  SOLUTIONS_FOLDER: 'solutions'
+  BUILD_NUMBER: ${{ github.run_number }}
+  INCREMENT_VERSION: ${{ github.event.inputs.increment_version }}
+  PUBLISH_CUSTOMIZATIONS: ${{ github.event.inputs.publish_customizations }}
+  RUN_POWERAPPS_CHECKER: ${{ github.event.inputs.run_powerapps_checker }}
+
+jobs:
+  export-and-unpack:
+    runs-on: windows-latest
+    environment: DEV
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Power Platform CLI
+        uses: microsoft/powerplatform-actions/actions-install@v1
+
+      - name: Authenticate with Dataverse
+        shell: pwsh
+        run: |
+          scripts/powerplatform/Authenticate-Dataverse.ps1 `
+            -DataverseEnv   "${{ env.DATAVERSE_ENV }}" `
+            -AppId          "${{ vars.POWERPLATFORM_APP_ID }}" `
+            -ClientSecret   "${{ secrets.POWERPLATFORM_CLIENT_SECRET }}" `
+            -TenantId       "${{ vars.POWERPLATFORM_TENANT_ID }}"
+
+      # Publish customizations once — applies to the entire environment
+      - name: Publish customizations
+        if: env.PUBLISH_CUSTOMIZATIONS == 'true'
+        uses: microsoft/powerplatform-actions/publish-solution@v1
+        with:
+          environment-url: ${{ env.DATAVERSE_ENV }}
+          app-id: ${{ vars.POWERPLATFORM_APP_ID }}
+          client-secret: ${{ secrets.POWERPLATFORM_CLIENT_SECRET }}
+          tenant-id: ${{ vars.POWERPLATFORM_TENANT_ID }}
+
+      # Loop over every solution: get/increment version, create folder, export, unpack
+      - name: Export and unpack all solutions
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $solutions = "${{ env.SOLUTION_NAMES }}" -split ',' |
+            ForEach-Object { $_.Trim() } |
+            Where-Object { $_ -ne '' }
+
+          Write-Host "Solutions to process: $($solutions -join ', ')"
+
+          foreach ($solutionName in $solutions) {
+            Write-Host ""
+            Write-Host "============================================================"
+            Write-Host "  Processing: $solutionName"
+            Write-Host "============================================================"
+
+            # ── Get current version ──────────────────────────────────────────
+            $listOutput = pac solution list
+            $versionLine = $listOutput | Select-String -Pattern "^\s*$solutionName\s"
+            if (-not $versionLine) {
+              throw "Solution '$solutionName' not found in the environment. Check the API name and try again."
+            }
+            $currentVersion = [regex]::Match($versionLine.Line, '\d+\.\d+\.\d+\.\d+').Value
+            if (-not $currentVersion) {
+              throw "Could not parse version for solution '$solutionName'."
+            }
+            $exportVersion      = $currentVersion
+            $exportVersionUnder = $currentVersion -replace '\.', '_'
+            Write-Host "Current version: $currentVersion"
+
+            # ── Increment version (patch segment) if requested ───────────────
+            if ($env:INCREMENT_VERSION -eq 'true') {
+              $parts    = $currentVersion -split '\.'
+              $parts[3] = [string]([int]$parts[3] + 1)
+              $exportVersion      = $parts -join '.'
+              $exportVersionUnder = $parts -join '_'
+              Write-Host "Incrementing to: $exportVersion"
+              pac solution online-version --solution-name $solutionName --solution-version $exportVersion
+              if ($LASTEXITCODE -ne 0) { throw "Failed to set online version for '$solutionName'." }
+            }
+
+            # ── Create solution folder if it does not exist ──────────────────
+            $solutionFolder = Join-Path "${{ env.SOLUTIONS_FOLDER }}" $solutionName
+            if (-not (Test-Path $solutionFolder)) {
+              New-Item -ItemType Directory -Path $solutionFolder | Out-Null
+              Write-Host "Created folder: $solutionFolder"
+            }
+
+            # ── Export unmanaged solution ────────────────────────────────────
+            $zipFile = "$solutionFolder/${solutionName}_unmanaged_${exportVersionUnder}.zip"
+            Write-Host "Exporting to: $zipFile"
+            pac solution export --name $solutionName --path $zipFile --managed false --overwrite
+            if ($LASTEXITCODE -ne 0) { throw "Export failed for '$solutionName'." }
+
+            # ── Unpack solution source files ─────────────────────────────────
+            Write-Host "Unpacking into: $solutionFolder"
+            pac solution unpack --zipFile $zipFile --folder $solutionFolder --packageType Unmanaged --overwrite
+            if ($LASTEXITCODE -ne 0) { throw "Unpack failed for '$solutionName'." }
+
+            Write-Host "Completed: $solutionName ($exportVersion)"
+          }
+
+          Write-Host ""
+          Write-Host "All solutions exported and unpacked successfully."
+
+      # Run PowerApps Checker on every exported zip (optional)
+      - name: Run PowerApps Checker for all solutions
+        if: env.RUN_POWERAPPS_CHECKER == 'true'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $solutions = "${{ env.SOLUTION_NAMES }}" -split ',' |
+            ForEach-Object { $_.Trim() } |
+            Where-Object { $_ -ne '' }
+
+          foreach ($solutionName in $solutions) {
+            Write-Host ""
+            Write-Host "Running PowerApps Checker for: $solutionName"
+
+            # Find the zip file for this solution (matches *_unmanaged_*.zip)
+            $zipFile = Get-ChildItem `
+              -Path (Join-Path "${{ env.SOLUTIONS_FOLDER }}" $solutionName) `
+              -Filter "${solutionName}_unmanaged_*.zip" |
+              Select-Object -First 1 -ExpandProperty FullName
+
+            if (-not $zipFile) {
+              Write-Warning "No zip file found for '$solutionName' — skipping checker."
+              continue
+            }
+
+            pac solution check --path $zipFile
+            if ($LASTEXITCODE -ne 0) {
+              Write-Warning "PowerApps Checker reported issues for '$solutionName' (exit code $LASTEXITCODE)."
+            } else {
+              Write-Host "Checker passed for: $solutionName"
+            }
+          }
+
+      # Commit and push all solution folders in one commit
+      - name: Commit and push all solutions
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          git config user.email "zsolt.zombik@nextwit.com"
+          git config user.name  "zsoltzombiknextwit"
+
+          $solutions = "${{ env.SOLUTION_NAMES }}" -split ',' |
+            ForEach-Object { $_.Trim() } |
+            Where-Object { $_ -ne '' }
+
+          # Stage each solution folder, excluding zip files
+          foreach ($solutionName in $solutions) {
+            $solutionFolder = Join-Path "${{ env.SOLUTIONS_FOLDER }}" $solutionName
+            git add $solutionFolder
+            # Unstage any zip files that were inadvertently staged
+            $stagedZips = git ls-files --cached "$solutionFolder/*.zip" 2>$null
+            foreach ($zip in $stagedZips) {
+              git restore --staged $zip
+            }
+          }
+
+          # Check if there is anything to commit
+          $staged = git diff --cached --name-only
+          if (-not $staged) {
+            Write-Host "No changes to commit — working tree is clean."
+            exit 0
+          }
+
+          $solutionList = $solutions -join ', '
+          $commitMsg    = "chore(solutions): export and unpack $solutionList [run ${{ env.BUILD_NUMBER }}]"
+
+          git commit -m $commitMsg
+          git push origin HEAD
+          Write-Host "Committed and pushed: $commitMsg"
+        continue-on-error: true
+
+  notify:
+    runs-on: ubuntu-latest
+    needs: export-and-unpack
+    if: always()
+
+    steps:
+      - name: Workflow Status
+        run: |
+          echo "Export and unpack workflow completed"
+          echo "Solutions: ${{ github.event.inputs.solution_names }}"
+          echo "Environment: DEV"
+          echo "Version incremented: ${{ github.event.inputs.increment_version }}"
+          echo "Customizations published: ${{ github.event.inputs.publish_customizations }}"
+          echo "PowerApps Checker run: ${{ github.event.inputs.run_powerapps_checker }}"
+          echo "Status: ${{ needs.export-and-unpack.result }}"

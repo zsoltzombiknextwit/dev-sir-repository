@@ -1,0 +1,141 @@
+name: GitHub to Power Platform
+
+on:
+  workflow_dispatch:
+    inputs:
+      github_environment:
+        description: 'GitHub environment to deploy to'
+        required: true
+        default: 'DEV'
+        type: choice
+        options:
+          - DEV
+          - MAINDEV
+      solution_name:
+        description: 'Dataverse solution name to pack and import (leave empty to auto-detect from changed files)'
+        required: false
+        type: string
+
+env:
+  SOLUTIONS_FOLDER: 'solutions'
+
+jobs:
+  detect-solutions:
+    name: Detect Solutions to Deploy
+    runs-on: ubuntu-latest
+    outputs:
+      solution_list: ${{ steps.detect.outputs.solution_list }}
+      has_solutions: ${{ steps.detect.outputs.has_solutions }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Detect changed solutions
+        id: detect
+        run: |
+          if [ -n "${{ github.event.inputs.solution_name }}" ]; then
+            # Manual trigger with explicit solution name
+            SOLUTIONS='["${{ github.event.inputs.solution_name }}"]'
+            echo "solution_list=$SOLUTIONS" >> $GITHUB_OUTPUT
+            echo "has_solutions=true" >> $GITHUB_OUTPUT
+            echo "Using manually specified solution: ${{ github.event.inputs.solution_name }}"
+          else
+            # Auto-detect changed solution folders from the commit diff
+            CHANGED=$(git diff --name-only HEAD~1 HEAD -- '${{ env.SOLUTIONS_FOLDER }}/' | \
+              grep '^${{ env.SOLUTIONS_FOLDER }}/' | \
+              cut -d'/' -f2 | \
+              sort -u)
+
+            if [ -z "$CHANGED" ]; then
+              echo "has_solutions=false" >> $GITHUB_OUTPUT
+              echo "solution_list=[]" >> $GITHUB_OUTPUT
+              echo "No solution changes detected."
+            else
+              # Build JSON array
+              JSON=$(echo "$CHANGED" | jq -R . | jq -sc .)
+              echo "solution_list=$JSON" >> $GITHUB_OUTPUT
+              echo "has_solutions=true" >> $GITHUB_OUTPUT
+              echo "Detected changed solutions: $CHANGED"
+            fi
+          fi
+
+  pack-and-import:
+    name: Pack and Import — ${{ matrix.solution }}
+    runs-on: windows-latest
+    needs: detect-solutions
+    if: needs.detect-solutions.outputs.has_solutions == 'true'
+    environment: ${{ github.event.inputs.github_environment }}
+
+    strategy:
+      matrix:
+        solution: ${{ fromJson(needs.detect-solutions.outputs.solution_list) }}
+      fail-fast: false
+
+    env:
+      SOLUTION_NAME: ${{ matrix.solution }}
+      DATAVERSE_ENV: ${{ vars.POWERPLATFORM_ENVIRONMENT_URL }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Power Platform CLI
+        uses: microsoft/powerplatform-actions/actions-install@v1
+
+      - name: Validate unpacked solution source exists
+        shell: pwsh
+        run: |
+          $solutionPath = ".\${{ env.SOLUTIONS_FOLDER }}\${{ env.SOLUTION_NAME }}"
+          if (-not (Test-Path $solutionPath)) {
+            Write-Error "Unpacked solution source not found at: $solutionPath"
+            exit 1
+          }
+          Write-Host "Found unpacked solution source: $solutionPath"
+
+      - name: Ensure output zip folder exists
+        shell: pwsh
+        run: |
+          $zipFolder = ".\${{ env.SOLUTIONS_FOLDER }}\${{ env.SOLUTION_NAME }}"
+          New-Item -ItemType Directory -Path $zipFolder -Force | Out-Null
+          Write-Host "Output folder ready: $zipFolder"
+
+      - name: Pack unmanaged solution
+        uses: microsoft/powerplatform-actions/pack-solution@v1
+        with:
+          solution-folder: ${{ env.SOLUTIONS_FOLDER }}/${{ env.SOLUTION_NAME }}
+          solution-file: ${{ env.SOLUTIONS_FOLDER }}/${{ env.SOLUTION_NAME }}/${{ env.SOLUTION_NAME }}_unmanaged.zip
+          solution-type: Unmanaged
+
+      - name: Upload solution artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.SOLUTION_NAME }}-packed
+          path: ${{ env.SOLUTIONS_FOLDER }}/${{ env.SOLUTION_NAME }}/${{ env.SOLUTION_NAME }}_unmanaged.zip
+
+      - name: Import unmanaged solution into Dataverse
+        uses: microsoft/powerplatform-actions/import-solution@v1
+        with:
+          environment-url: ${{ env.DATAVERSE_ENV }}
+          app-id: ${{ vars.POWERPLATFORM_APP_ID }}
+          client-secret: ${{ secrets.POWERPLATFORM_CLIENT_SECRET }}
+          tenant-id: ${{ vars.POWERPLATFORM_TENANT_ID }}
+          solution-file: ${{ env.SOLUTIONS_FOLDER }}/${{ env.SOLUTION_NAME }}/${{ env.SOLUTION_NAME }}_unmanaged.zip
+          force-overwrite: true
+          publish-changes: true
+
+  notify:
+    runs-on: ubuntu-latest
+    needs: [detect-solutions, pack-and-import]
+    if: always()
+
+    steps:
+      - name: Workflow Status
+        run: |
+          echo "Pack and import workflow completed"
+          echo "Environment: ${{ github.event.inputs.github_environment }}"
+          echo "Solutions processed: ${{ needs.detect-solutions.outputs.solution_list }}"
+          echo "Detect status: ${{ needs.detect-solutions.result }}"
+          echo "Import status: ${{ needs.pack-and-import.result }}"

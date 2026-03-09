@@ -1,0 +1,161 @@
+name: Power Platform to GitHub
+
+on:
+  workflow_dispatch:
+    inputs:
+      # -----------------------------------------------------------------------
+      # CUSTOMIZE SOLUTION NAMES
+      # Add, remove, or rename entries in the `options` list below to match
+      # the API names of your Dataverse solutions (case-sensitive).
+      # The API name is visible in Power Platform → Solutions → Display Name
+      # column. Use the value shown in parentheses, e.g. "ContosoCore".
+      # -----------------------------------------------------------------------
+      solution_name:
+        description: 'Dataverse solution name to export and unpack'
+        required: true
+        type: choice
+        options:
+          - MySolution1
+          - MySolution2
+          - MySolution3
+      increment_version:
+        description: 'Increase solution version number before export?'
+        required: true
+        default: 'false'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+      publish_customizations:
+        description: 'Publish customizations before export?'
+        required: true
+        default: 'false'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+      run_powerapps_checker:
+        description: 'Run PowerApps Checker before committing unpacked solution?'
+        required: true
+        default: 'false'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+
+env:
+  SOLUTION_NAME: ${{ github.event.inputs.solution_name }}
+  DATAVERSE_ENV: ${{ vars.POWERPLATFORM_ENVIRONMENT_URL }}
+  SOLUTIONS_FOLDER: 'solutions'
+  BUILD_NUMBER: ${{ github.run_number }}
+  INCREMENT_VERSION: ${{ github.event.inputs.increment_version }}
+  PUBLISH_CUSTOMIZATIONS: ${{ github.event.inputs.publish_customizations }}
+  RUN_POWERAPPS_CHECKER: ${{ github.event.inputs.run_powerapps_checker }}
+
+jobs:
+  export-and-unpack:
+    runs-on: windows-latest
+    environment: DEV
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Power Platform CLI
+        uses: microsoft/powerplatform-actions/actions-install@v1
+
+      - name: Authenticate with Dataverse
+        shell: pwsh
+        run: |
+          scripts/powerplatform/Authenticate-Dataverse.ps1 `
+            -DataverseEnv   "${{ env.DATAVERSE_ENV }}" `
+            -AppId          "${{ vars.POWERPLATFORM_APP_ID }}" `
+            -ClientSecret   "${{ secrets.POWERPLATFORM_CLIENT_SECRET }}" `
+            -TenantId       "${{ vars.POWERPLATFORM_TENANT_ID }}"
+
+      - name: Get solution version
+        id: get-version
+        shell: pwsh
+        run: |
+          scripts/powerplatform/Get-SolutionVersion.ps1 `
+            -SolutionName "${{ env.SOLUTION_NAME }}"
+
+      - name: Increment solution version (patch)
+        id: increment-version
+        if: env.INCREMENT_VERSION == 'true'
+        shell: pwsh
+        run: |
+          scripts/powerplatform/Increment-SolutionVersion.ps1 `
+            -SolutionName    "${{ env.SOLUTION_NAME }}" `
+            -CurrentVersion  "${{ steps.get-version.outputs.current_version }}"
+
+      - name: Create solutions folder structure
+        shell: pwsh
+        run: |
+          scripts/powerplatform/New-SolutionsFolder.ps1 `
+            -SolutionsFolder "${{ env.SOLUTIONS_FOLDER }}" `
+            -SolutionName    "${{ env.SOLUTION_NAME }}"
+
+      - name: Publish customizations
+        id: publish-customizations
+        if: env.PUBLISH_CUSTOMIZATIONS == 'true'
+        uses: microsoft/powerplatform-actions/publish-solution@v1
+        with:
+          environment-url: ${{ env.DATAVERSE_ENV }}
+          app-id: ${{ vars.POWERPLATFORM_APP_ID }}
+          client-secret: ${{ secrets.POWERPLATFORM_CLIENT_SECRET }}
+          tenant-id: ${{ vars.POWERPLATFORM_TENANT_ID }}
+
+      - name: Export unmanaged solution
+        uses: microsoft/powerplatform-actions/export-solution@v1
+        with:
+          environment-url: ${{ env.DATAVERSE_ENV }}
+          app-id: ${{ vars.POWERPLATFORM_APP_ID }}
+          client-secret: ${{ secrets.POWERPLATFORM_CLIENT_SECRET }}
+          tenant-id: ${{ vars.POWERPLATFORM_TENANT_ID }}
+          solution-name: ${{ env.SOLUTION_NAME }}
+          solution-output-file: ${{ env.SOLUTIONS_FOLDER }}/${{ env.SOLUTION_NAME }}/${{ env.SOLUTION_NAME }}_unmanaged_${{ env.INCREMENT_VERSION == 'true' && steps.increment-version.outputs.new_version_underscore || steps.get-version.outputs.current_version_underscore }}.zip
+          managed: false
+
+      - name: Unpack unmanaged solution
+        uses: microsoft/powerplatform-actions/unpack-solution@v1
+        with:
+          solution-file: ${{ env.SOLUTIONS_FOLDER }}/${{ env.SOLUTION_NAME }}/${{ env.SOLUTION_NAME }}_unmanaged_${{ env.INCREMENT_VERSION == 'true' && steps.increment-version.outputs.new_version_underscore || steps.get-version.outputs.current_version_underscore }}.zip
+          solution-folder: ${{ env.SOLUTIONS_FOLDER }}/${{ env.SOLUTION_NAME }}
+          solution-type: Unmanaged
+          process-canvas-apps: true
+
+      - name: Run PowerApps Checker
+        if: env.RUN_POWERAPPS_CHECKER == 'true'
+        uses: microsoft/powerplatform-actions/check-solution@v1
+        with:
+          environment-url: ${{ env.DATAVERSE_ENV }}
+          app-id: ${{ vars.POWERPLATFORM_APP_ID }}
+          client-secret: ${{ secrets.POWERPLATFORM_CLIENT_SECRET }}
+          tenant-id: ${{ vars.POWERPLATFORM_TENANT_ID }}
+          path: ${{ env.SOLUTIONS_FOLDER }}/${{ env.SOLUTION_NAME }}/${{ env.SOLUTION_NAME }}_unmanaged_${{ env.INCREMENT_VERSION == 'true' && steps.increment-version.outputs.new_version_underscore || steps.get-version.outputs.current_version_underscore }}.zip
+          checker-logs-artifact-name: powerapps-checker-logs-${{ env.SOLUTION_NAME }}
+
+      - name: Commit and push changes
+        shell: pwsh
+        run: |
+          scripts/powerplatform/Commit-And-Push.ps1 `
+            -SolutionsFolder "${{ env.SOLUTIONS_FOLDER }}" `
+            -SolutionName    "${{ env.SOLUTION_NAME }}"
+        continue-on-error: true
+
+  notify:
+    runs-on: ubuntu-latest
+    needs: export-and-unpack
+    if: always()
+
+    steps:
+      - name: Workflow Status
+        run: |
+          echo "Export and unpack workflow completed"
+          echo "Solution: ${{ github.event.inputs.solution_name }}"
+          echo "Environment: DEV"
+          echo "Version incremented: ${{ github.event.inputs.increment_version }}"
+          echo "Customizations published: ${{ github.event.inputs.publish_customizations }}"
+          echo "PowerApps Checker run: ${{ github.event.inputs.run_powerapps_checker }}"
+          echo "Status: ${{ needs.export-and-unpack.result }}"
