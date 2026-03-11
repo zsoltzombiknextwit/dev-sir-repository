@@ -1,0 +1,33 @@
+{
+  "name": "comment-feed-library",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Shared logic, hooks, and Fluent UI v9 components for CommentFeed PCF controls.",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc --sourceMap false",
+    "build:watch": "tsc --watch",
+    "clean": "if (Test-Path dist) { Remove-Item -Recurse -Force dist }"
+  },
+  "dependencies": {
+    "@fluentui/react-components": "9.46.2",
+    "@fluentui/react-icons": "*",
+    "@fluentui/react-theme": "*",
+    "@griffel/react": "*",
+    "react": "16.14.0",
+    "react-dom": "16.14.0"
+  },
+  "devDependencies": {
+    "@types/react": "^16.14.60",
+    "@types/react-dom": "^16.9.24",
+    "typescript": "^5.8.3"
+  },
+  "peerDependencies": {
+    "react": "16.14.0",
+    "react-dom": "16.14.0"
+  }
+}

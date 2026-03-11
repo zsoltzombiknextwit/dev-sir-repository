@@ -1,0 +1,19 @@
+{
+  "name": "nextwit-crm-pcf",
+  "version": "1.0.0",
+  "private": true,
+  "workspaces": [
+    "pcf/CommentFeedLibrary",
+    "pcf/CommentFeedStandard",
+    "pcf/CommentFeedDataSet"
+  ],
+  "scripts": {
+    "build:library": "npm run build --workspace=pcf/CommentFeedLibrary",
+    "build:standard": "npm run build --workspace=pcf/CommentFeedStandard",
+    "build:dataset": "npm run build --workspace=pcf/CommentFeedDataSet",
+    "build:controls": "npm run build:standard && npm run build:dataset",
+    "build:all": "npm run build:library && npm run build:controls",
+    "start:standard": "npm run start --workspace=pcf/CommentFeedStandard",
+    "start:dataset": "npm run start --workspace=pcf/CommentFeedDataSet"
+  }
+}

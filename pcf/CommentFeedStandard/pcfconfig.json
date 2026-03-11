@@ -1,0 +1,5 @@
+{
+    "outDir": "./out/controls",
+    "buildMode": "production",
+    "pcfStartPath": "../../node_modules/pcf-start/bin/pcf-start.js"
+}

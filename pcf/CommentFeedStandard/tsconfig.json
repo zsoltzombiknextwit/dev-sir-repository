@@ -1,0 +1,10 @@
+{
+    "extends": "../../node_modules/pcf-scripts/tsconfig_base.json",
+    "compilerOptions": {
+        "typeRoots": ["../../node_modules/@types"],
+        "baseUrl": ".",
+        "paths": {
+            "comment-feed-library": ["../CommentFeedLibrary/src/index"]
+        }
+    }
+}
