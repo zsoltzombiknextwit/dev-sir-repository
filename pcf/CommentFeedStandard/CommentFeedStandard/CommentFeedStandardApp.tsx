@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { IdPrefixProvider, FluentProvider, webLightTheme } from '@fluentui/react-components';
 import { makeStyles } from '@griffel/react';
-import { CommentList, CommentInput, useComments } from 'comment-feed-library';
+import { CommentList, CommentInput, useComments, PcfContextProvider, PcfContextService } from 'comment-feed-library';
 
 const useStyles = makeStyles({
   root: {
@@ -24,6 +24,7 @@ const useStyles = makeStyles({
 });
 
 export interface ICommentFeedStandardProps {
+  pcfContextService: PcfContextService;
   regardingId: string;
   regardingEntityType: string;
   webApi: ComponentFramework.WebApi;
@@ -33,6 +34,7 @@ export interface ICommentFeedStandardProps {
 }
 
 export const CommentFeedStandardApp: React.FC<ICommentFeedStandardProps> = ({
+  pcfContextService,
   regardingId,
   regardingEntityType,
   webApi,
@@ -58,6 +60,7 @@ export const CommentFeedStandardApp: React.FC<ICommentFeedStandardProps> = ({
   });
 
   return (
+    <PcfContextProvider pcfcontext={pcfContextService}>
     <IdPrefixProvider value={`app-${regardingId}-`}>
       <FluentProvider theme={webLightTheme} className={styles.root} style={{ height: containerHeight }}>
         {error && <div className={styles.error}>{error}</div>}
@@ -78,6 +81,7 @@ export const CommentFeedStandardApp: React.FC<ICommentFeedStandardProps> = ({
         )}
       </FluentProvider>
     </IdPrefixProvider>
+    </PcfContextProvider>
   );
 };
 

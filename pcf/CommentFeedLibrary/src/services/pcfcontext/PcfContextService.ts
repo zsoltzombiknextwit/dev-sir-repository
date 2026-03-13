@@ -2,9 +2,12 @@
 
 import { Theme } from "@fluentui/react-components";
 
-export interface IPcfContextServiceProps<TInputs = Record<string, unknown>> {
-  context: ComponentFramework.Context<TInputs>;
+export type AttachmentStorage = "Annotation" | "FileField" | "BlobStorage" | "SharePoint";
+
+export interface IPcfContextServiceProps {
+  context: ComponentFramework.Context<unknown>;
   instanceid: string;
+  attachmentStorage?: AttachmentStorage;
 }
 
 const SmallFormFactorMaxWidth = 350;
@@ -21,15 +24,17 @@ interface ContextInfo {
   entityId: string;
 }
 
-export class PcfContextService<TInputs = Record<string, unknown>> {
+export class PcfContextService {
   instanceid: string;
-  context: ComponentFramework.Context<TInputs>;
+  context: ComponentFramework.Context<unknown>;
   theme: Theme;
   formFactor: string;
+  attachmentStorage: AttachmentStorage;
 
-  constructor(props: IPcfContextServiceProps<TInputs>) {
+  constructor(props: IPcfContextServiceProps) {
     this.instanceid = props.instanceid;
     this.context = props.context;
+    this.attachmentStorage = props.attachmentStorage ?? "SharePoint";
     this.theme = this.getTheme();      
     this.formFactor =
       props.context.client.getFormFactor() == (FormFactors.Phone as number) ||

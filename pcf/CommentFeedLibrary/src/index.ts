@@ -14,6 +14,10 @@ export type { ICommentCardProps, ICommentListProps, ICommentInputProps } from ".
 export { useComments } from "./hooks";
 export type { UseCommentsOptions, UseCommentsResult } from "./hooks";
 
+// ── Services ─────────────────────────────────────────────────────────────────
+export { PcfContextProvider, usePcfContext } from "./services/pcfcontext/PcfContext";
+export { PcfContextService } from "./services/pcfcontext/PcfContextService";
+
 // ── Utils ─────────────────────────────────────────────────────────────────────
 export { formatRelativeDate, getInitials } from "./utils";
 

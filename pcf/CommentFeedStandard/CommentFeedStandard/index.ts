@@ -1,11 +1,13 @@
 import { IInputs, IOutputs } from "./generated/ManifestTypes";
 import { CommentFeedStandardApp, ICommentFeedStandardProps } from "./CommentFeedStandardApp";
 import * as React from "react";
+import { PcfContextService } from "comment-feed-library";
 
 export class CommentFeedStandard implements ComponentFramework.ReactControl<IInputs, IOutputs> {
     private notifyOutputChanged: () => void;
     private _pageEntityId = '';
     private _pageEntityType = '';
+    private _pcfContextService!: PcfContextService;
 
     /**
      * Empty constructor.
@@ -32,6 +34,11 @@ export class CommentFeedStandard implements ComponentFramework.ReactControl<IInp
         const page = (context as unknown as { page: { entityId: string; entityTypeName: string } }).page;
         this._pageEntityId   = page?.entityId ?? '';
         this._pageEntityType = page?.entityTypeName ?? '';
+        this._pcfContextService = new PcfContextService({
+            context,
+            instanceid: this._pageEntityId,
+            attachmentStorage: context.parameters.attachmentStorage.raw ?? 'SharePoint',
+        });
         console.log('[CommentFeedStandard] _pageEntityId:', this._pageEntityId);
         console.log('[CommentFeedStandard] _pageEntityType:', this._pageEntityType);
     }
@@ -48,6 +55,7 @@ export class CommentFeedStandard implements ComponentFramework.ReactControl<IInp
         const regardingEntityType = this._pageEntityType;
 
         const props: ICommentFeedStandardProps = {
+            pcfContextService: this._pcfContextService,
             regardingId,
             regardingEntityType,
             webApi: context.webAPI,

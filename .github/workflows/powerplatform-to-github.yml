@@ -15,9 +15,8 @@ on:
         required: true
         type: choice
         options:
-          - MySolution1
-          - MySolution2
-          - MySolution3
+          - CommentFeedSolution
+          - SIR
       increment_version:
         description: 'Increase solution version number before export?'
         required: true
