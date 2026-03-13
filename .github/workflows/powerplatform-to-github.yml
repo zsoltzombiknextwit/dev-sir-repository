@@ -122,7 +122,7 @@ jobs:
           solution-file: ${{ env.SOLUTIONS_FOLDER }}/${{ env.SOLUTION_NAME }}/${{ env.SOLUTION_NAME }}_unmanaged_${{ env.INCREMENT_VERSION == 'true' && steps.increment-version.outputs.new_version_underscore || steps.get-version.outputs.current_version_underscore }}.zip
           solution-folder: ${{ env.SOLUTIONS_FOLDER }}/${{ env.SOLUTION_NAME }}
           solution-type: Unmanaged
-          process-canvas-apps: true
+          process-canvas-apps: false
 
       - name: Run PowerApps Checker
         if: env.RUN_POWERAPPS_CHECKER == 'true'
